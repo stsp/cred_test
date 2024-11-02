@@ -30,21 +30,14 @@ struct sock_addr {
 	socklen_t addrlen;
 };
 
-static void fill_sockaddr(struct sock_addr *addr, bool abstract)
+static void fill_sockaddr(struct sock_addr *addr)
 {
 	char *sun_path_buf = (char *)&addr->listen_addr.sun_path;
 
 	addr->listen_addr.sun_family = AF_UNIX;
 	addr->addrlen = offsetof(struct sockaddr_un, sun_path);
-	strncpy(addr->sock_name, "scm_pidfd_server", sizeof(addr->sock_name));
+	strncpy(addr->sock_name, "scm_credfd_server", sizeof(addr->sock_name));
 	addr->addrlen += strlen(addr->sock_name);
-	if (abstract) {
-		*sun_path_buf = '\0';
-		addr->addrlen++;
-		sun_path_buf++;
-	} else {
-		unlink(addr->sock_name);
-	}
 	memcpy(sun_path_buf, addr->sock_name, strlen(addr->sock_name));
 }
 
@@ -121,7 +114,8 @@ int main(int argc, char *argv[])
 	server = socket(AF_UNIX, SOCK_STREAM, 0);
 	assert(server != -1);
 
-	fill_sockaddr(&server_addr, 0);
+	fill_sockaddr(&server_addr);
+	unlink(server_addr.sock_name);
 	umask(0);
 	err = bind(server, (struct sockaddr *)&server_addr.listen_addr, server_addr.addrlen);
 	assert(err == 0);
