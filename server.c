@@ -68,19 +68,15 @@ static int set_creds(int cfd)
 	}
 	if (peer_cred.uid != geteuid()) {
 		struct passwd *pw = getpwuid(peer_cred.uid);
-		gid_t groups[NGROUPS_MAX];
-		int ng = NGROUPS_MAX;
-		int rc, err;
+		int err;
 
 		if (!pw) {
 			log_err("getpwuid() failed");
 			return -1;
 		}
-		rc = getgrouplist(pw->pw_name, peer_cred.gid, groups, &ng);
-		assert(rc > 0);
-		err = setgroups(ng, groups);
+		err = initgroups(pw->pw_name, peer_cred.gid);
 		if (err) {
-			log_err("setgroups() failed");
+			log_err("initgroups() failed");
 			return -1;
 		}
 		err = seteuid(peer_cred.uid);
