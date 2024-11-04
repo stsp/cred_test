@@ -1,20 +1,15 @@
 #define _GNU_SOURCE
-#include <error.h>
-#include <limits.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
-#include <linux/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/un.h>
-#include <sys/signal.h>
-#include <sys/types.h>
 #include <assert.h>
-#include <sys/syscall.h>      /* Definition of SYS_* constants */
 #include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
@@ -127,7 +122,8 @@ int main(int argc, char *argv[])
 	assert(pfd != -1);
 
 	set_creds(pfd);
-	myfd = syscall(SYS_pidfd_open, getpid(), 0);
+	myfd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+	assert(myfd != -1);
 	memcpy(CMSG_DATA(cmsg), &myfd, sizeof(myfd));
 
 	err = sendmsg(pfd, &msg, 0);
@@ -137,6 +133,7 @@ int main(int argc, char *argv[])
 	if (err == 0)
 		printf("EOF from client\n");
 
+	close(myfd);
 	close(server);
 	unlink(server_addr.sock_name);
 	return 0;

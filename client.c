@@ -1,24 +1,17 @@
-#include <error.h>
-#include <limits.h>
 #include <stddef.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <linux/socket.h>
+#include <linux/fs.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/un.h>
-#include <sys/signal.h>
-#include <sys/types.h>
 #include <sys/ioctl.h>
 
-#ifndef PIDFS_IOCTL_MAGIC
-#define PIDFS_IOCTL_MAGIC 0xFF
-#endif
-#ifndef PIDFD_BORROW_GROUPS
-#define PIDFD_BORROW_GROUPS                   _IO(PIDFS_IOCTL_MAGIC, 11)
+#ifndef PROCFS_SET_GROUPS
+#define PROCFS_SET_GROUPS _IO(PROCFS_IOCTL_MAGIC, 18)
 #endif
 
 #define clean_errno() (errno == 0 ? "None" : strerror(errno))
@@ -99,6 +92,20 @@ static void fill_sockaddr(struct sock_addr *addr)
 	memcpy(sun_path_buf, addr->sock_name, strlen(addr->sock_name));
 }
 
+static char *find_groups(int fd, char *buf, size_t buf_len)
+{
+	FILE *f = fdopen(dup(fd), "r");
+	const char *pat = "Groups:";
+	char *s;
+
+	while ((s = fgets(buf, buf_len, f))) {
+		if (strncmp(buf, pat, strlen(pat)) == 0)
+			break;
+	}
+	fclose(f);
+	return s;
+}
+
 int main(void)
 {
 	int cfd;
@@ -107,6 +114,8 @@ int main(void)
 	struct sock_addr server_addr;
 	uid_t euid;
 	gid_t egid;
+	char buf[1024];
+	char *g;
 
 	cfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (cfd < 0) {
@@ -141,7 +150,13 @@ int main(void)
 		child_die();
 	}
 	system("id");
-	err = ioctl(rcv_fd, PIDFD_BORROW_GROUPS, 0);
+	g = find_groups(rcv_fd, buf, sizeof(buf));
+	if (!g) {
+		log_err("no groups in received file");
+		child_die();
+	}
+	puts(g);
+	err = ioctl(rcv_fd, PROCFS_SET_GROUPS, 0);
 	if (err) {
 		log_err("ioctl failed");
 		child_die();
@@ -153,5 +168,7 @@ int main(void)
 		child_die();
 	}
 
+	close(rcv_fd);
+	close(cfd);
 	return 0;
 }
