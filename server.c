@@ -36,6 +36,23 @@ static void fill_sockaddr(struct sock_addr *addr)
 	memcpy(sun_path_buf, addr->sock_name, strlen(addr->sock_name));
 }
 
+static int set_groups(uid_t uid, gid_t gid)
+{
+	struct passwd *pw = getpwuid(uid);
+	int err;
+
+	if (!pw) {
+		log_err("getpwuid() failed");
+		return -1;
+	}
+	err = initgroups(pw->pw_name, gid);
+	if (err) {
+		log_err("initgroups() failed");
+		return -1;
+	}
+	return 0;
+}
+
 static int set_creds(int cfd)
 {
 	socklen_t len;
@@ -48,23 +65,14 @@ static int set_creds(int cfd)
 	}
 	printf("peer uid: %i gid: %i\n", peer_cred.uid, peer_cred.gid);
 	if (peer_cred.uid != getuid()) {
-		struct passwd *pw = getpwuid(peer_cred.uid);
-		int err;
-
-		if (!pw) {
-			log_err("getpwuid() failed");
-			return -1;
-		}
-		err = initgroups(pw->pw_name, peer_cred.gid);
-		if (err) {
-			log_err("initgroups() failed");
-			return -1;
-		}
-		err = setreuid(peer_cred.uid, -1);
+		int err = setreuid(peer_cred.uid, -1);
 		if (err) {
 			log_err("setreuid() failed");
 			return -1;
 		}
+		err = set_groups(peer_cred.uid, peer_cred.gid);
+		if (err)
+			return err;
 	}
 	if (peer_cred.gid != getgid()) {
 		int err = setregid(peer_cred.gid, -1);
@@ -79,12 +87,13 @@ static int set_creds(int cfd)
 int main(int argc, char *argv[])
 {
 	int err, rv;
+	pid_t uid, gid;
 	int pfd;
 	int server;
 	struct sock_addr server_addr;
 	struct msghdr msg = { 0 };
 	struct cmsghdr *cmsg;
-	int myfd;
+	int send_fd;
 	int iobuf;
 	struct iovec io = {
 	    .iov_base = &iobuf,
@@ -92,7 +101,7 @@ int main(int argc, char *argv[])
 	};
 	union {         /* Ancillary data buffer, wrapped in a union
 	                   in order to ensure it is suitably aligned */
-	    char buf[CMSG_SPACE(sizeof(myfd))];
+	    char buf[CMSG_SPACE(sizeof(send_fd))];
 	    struct cmsghdr align;
 	} u;
 
@@ -103,7 +112,7 @@ int main(int argc, char *argv[])
 	cmsg = CMSG_FIRSTHDR(&msg);
 	cmsg->cmsg_level = SOL_SOCKET;
 	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(myfd));
+	cmsg->cmsg_len = CMSG_LEN(sizeof(send_fd));
 	iobuf = 0;
 
 	server = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -121,10 +130,12 @@ int main(int argc, char *argv[])
 	pfd = accept(server, NULL, NULL);
 	assert(pfd != -1);
 
+	uid = getuid();
+	gid = getgid();
 	set_creds(pfd);
-	myfd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
-	assert(myfd != -1);
-	memcpy(CMSG_DATA(cmsg), &myfd, sizeof(myfd));
+	send_fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+	assert(send_fd != -1);
+	memcpy(CMSG_DATA(cmsg), &send_fd, sizeof(send_fd));
 
 	err = sendmsg(pfd, &msg, 0);
 	assert(err != -1);
@@ -135,8 +146,16 @@ int main(int argc, char *argv[])
 	if (rv)
 		printf("client returned error %i\n", rv);
 
-	close(myfd);
+	close(send_fd);
 	close(server);
 	unlink(server_addr.sock_name);
+
+	/* now restore creds */
+	err = setreuid(uid, -1);
+	assert(err == 0);
+	err = setregid(gid, -1);
+	assert(err == 0);
+	err = set_groups(uid, gid);
+	assert(err == 0);
 	return 0;
 }
