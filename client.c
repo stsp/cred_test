@@ -66,12 +66,6 @@ static int cmsg_recv(int fd)
 		memcpy(&rcv_fd, CMSG_DATA(cmsg), sizeof(rcv_fd));
 	}
 
-	/* send(pfd, "x", sizeof(char), 0) */
-	if (data != 'x') {
-		log_err("recvmsg: data corruption");
-		return -1;
-	}
-
 	return rcv_fd;
 }
 
@@ -110,7 +104,7 @@ int main(void)
 {
 	int cfd;
 	int rcv_fd;
-	int err;
+	int err, rv, errn;
 	struct sock_addr server_addr;
 	uid_t euid;
 	gid_t egid;
@@ -156,17 +150,19 @@ int main(void)
 		child_die();
 	}
 	puts(g);
-	err = ioctl(rcv_fd, PROCFS_SET_GROUPS, 0);
-	if (err) {
+	rv = ioctl(rcv_fd, PROCFS_SET_GROUPS, 0);
+	errn = errno;
+	err = send(cfd, &rv, sizeof(int), 0);
+	if (err != sizeof(int)) {
+		log_err("send failed");
+		child_die();
+	}
+	errno = errn;
+	if (rv) {
 		log_err("ioctl failed");
 		child_die();
 	}
 	system("id");
-	err = send(cfd, "x", 1, 0);
-	if (err != 1) {
-		log_err("send failed");
-		child_die();
-	}
 
 	close(rcv_fd);
 	close(cfd);

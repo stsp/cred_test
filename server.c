@@ -47,14 +47,7 @@ static int set_creds(int cfd)
 		return -1;
 	}
 	printf("peer uid: %i gid: %i\n", peer_cred.uid, peer_cred.gid);
-	if (peer_cred.gid != getegid()) {
-		int err = setegid(peer_cred.gid);
-		if (err) {
-			log_err("setegid() failed");
-			return -1;
-		}
-	}
-	if (peer_cred.uid != geteuid()) {
+	if (peer_cred.uid != getuid()) {
 		struct passwd *pw = getpwuid(peer_cred.uid);
 		int err;
 
@@ -67,9 +60,16 @@ static int set_creds(int cfd)
 			log_err("initgroups() failed");
 			return -1;
 		}
-		err = seteuid(peer_cred.uid);
+		err = setreuid(peer_cred.uid, -1);
 		if (err) {
-			log_err("seteuid() failed");
+			log_err("setreuid() failed");
+			return -1;
+		}
+	}
+	if (peer_cred.gid != getgid()) {
+		int err = setregid(peer_cred.gid, -1);
+		if (err) {
+			log_err("setregid() failed");
 			return -1;
 		}
 	}
@@ -78,16 +78,16 @@ static int set_creds(int cfd)
 
 int main(int argc, char *argv[])
 {
-	int err;
+	int err, rv;
 	int pfd;
 	int server;
 	struct sock_addr server_addr;
 	struct msghdr msg = { 0 };
 	struct cmsghdr *cmsg;
 	int myfd;
-	char iobuf[1];
+	int iobuf;
 	struct iovec io = {
-	    .iov_base = iobuf,
+	    .iov_base = &iobuf,
 	    .iov_len = sizeof(iobuf)
 	};
 	union {         /* Ancillary data buffer, wrapped in a union
@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
 	cmsg->cmsg_level = SOL_SOCKET;
 	cmsg->cmsg_type = SCM_RIGHTS;
 	cmsg->cmsg_len = CMSG_LEN(sizeof(myfd));
-	iobuf[0] = 'x';
+	iobuf = 0;
 
 	server = socket(AF_UNIX, SOCK_STREAM, 0);
 	assert(server != -1);
@@ -128,10 +128,12 @@ int main(int argc, char *argv[])
 
 	err = sendmsg(pfd, &msg, 0);
 	assert(err != -1);
-	err = recv(pfd, iobuf, 1, 0);
+	err = recv(pfd, &rv, sizeof(rv), 0);
 	assert(err >= 0);
 	if (err == 0)
 		printf("EOF from client\n");
+	if (rv)
+		printf("client returned error %i\n", rv);
 
 	close(myfd);
 	close(server);
